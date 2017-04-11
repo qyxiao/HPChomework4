@@ -26,6 +26,7 @@ if (rank == 0) {
     printf("Numtasks=%d. Only 2 needed. Ignoring extra...\n",numtasks);
   for (i=0; i<10; i++) {
     alpha = i*10;
+    
     MPI_Isend(&alpha, 1, MPI_INT, 1, tag, MPI_COMM_WORLD, &reqs[i]);
     MPI_Wait(&reqs[i], &stats[i]);
     printf("Task %d sent = %d\n",rank,alpha);
@@ -34,8 +35,10 @@ if (rank == 0) {
 
 if (rank == 1) {
   for (i=0; i<10; i++) {
-    MPI_Irecv(&beta, 1, MPI_FLOAT, 0, tag, MPI_COMM_WORLD, &reqs[i]);
+    int temp;
+    MPI_Irecv(&temp, 1, MPI_INT, 0, tag, MPI_COMM_WORLD, &reqs[i]);  
     MPI_Wait(&reqs[i], &stats[i]);
+    beta = (float)temp; 
     printf("Task %d received = %f\n",rank,beta);
     }
   }
