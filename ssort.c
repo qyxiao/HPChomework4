@@ -21,17 +21,18 @@ static int compare(const void *a, const void *b)
 
 int main( int argc, char *argv[])
 {
-  int rank;
-  int i, N;
-  int *vec;
+  int rank, size, gap=5;
+  int i, N, subsum, index;
+  int *vec, *svec, *rvec, *spliter, *counter, *Rcounter;
+  int *receiver;
 
   MPI_Init(&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
+  MPI_Comm_size(MPI_COMM_WORLD, &size);
   /* Number of random numbers per processor (this should be increased
    * for actual tests or could be passed in through the command line */
   N = 100;
-
+  
   vec = calloc(N, sizeof(int));
   /* seed random number generator differently on every core */
   srand((unsigned int) (rank + 393919));
@@ -41,34 +42,99 @@ int main( int argc, char *argv[])
     vec[i] = rand();
   }
   printf("rank: %d, first entry: %d\n", rank, vec[0]);
-
-  /* sort locally */
   qsort(vec, N, sizeof(int), compare);
+    
+  svec = calloc(gap, sizeof(int));
+  for(i=1;i<=gap;i++){
+      svec[i-1]=vec[(N/gap)*i];
+  }
 
-  /* randomly sample s entries from vector or select local splitters,
-   * i.e., every N/P-th entry of the sorted vector */
+  if(rank==0){
+    rvec = calloc(size*gap, sizeof(int));
+  }
 
-  /* every processor communicates the selected entries
-   * to the root processor; use for instance an MPI_Gather */
+  MPI_Gather(svec,gap,MPI_INT,rvec,size*gap,MPI_INT,0,MPI_COMM_WORLD);
+  spliter = calloc(size-1, sizeof(int));
 
-  /* root processor does a sort, determinates splitters that
-   * split the data into P buckets of approximately the same size */
+  if(rank==0){
+    qsort(rvec, gap*size, sizeof(int), compare);  
+    for(i=0,i<size-1,i++){
+      spliter[i]=rvec[(i+1)*gap];
+    }
+  }
+  
+  MPI_Bcast(spliter,size-1,MPI_INT,0,MPI_COMM_WORLD);
+  counter = calloc(size, sizeof(int));
+  Rcounter = calloc(size, sizeof(int));
+  subsum = 0;
+  index = 0;
+  for(i=0;i<N;i++){
+    if(vec[i]>spliter[index]){
+      counter[index]=subsum;
+      subsum=0;
+      index++;
+    }else{
+      subsum++;
+    }
+  }
+  if(index<N){
+    counter[index]=subsum;
+  }
 
-  /* root process broadcasts splitters */
 
-  /* every processor uses the obtained splitters to decide
-   * which integers need to be sent to which other processor (local bins) */
+  MPI_Alltoall(counter,1,MPI_INT,Rcounter,1,MPI_INT,MPI_COMM_WORLD);
+  
+  subsum=0;
+  for(i=0;i<size;i++){
+    subsum = subsum + Rcounter[i];
+  }
+  
 
-  /* send and receive: either you use MPI_AlltoallV, or
-   * (and that might be easier), use an MPI_Alltoall to share
-   * with every processor how many integers it should expect,
-   * and then use MPI_Send and MPI_Recv to exchange the data */
+  MPI_Status status_out[N], status_in[subsum];
+  MPI_Request request_out[N], request_in[subsum];
 
+  receiver = calloc(subsum, sizeof(int));
+  index=0;
+  for(i=0;i<size;i++){
+    while(counter[i]>0){
+      MPI_Isend(&(vec[index]),1,MPI_INT,i,counter[i],MPI_COMM_WORLD, &request_out[index]);
+      index++;
+      counter[i]--;
+    }
+  }
+
+  index=0;
+  for(i=0;i<size;i++){
+    while(Rcounter[i]>0){
+      MPI_Irecv(&(receiver[index]), 1, MPI_INT, i, Rcounter[i], MPI_COMM_WORLD, &request_in[index]);
+      index++;
+      Rcounter[i]--;
+    }
+  }
+  
+  
+  MPI_Waitall(subsum, request_in, status_in);
+  qsort(receiver, subsum, sizeof(int), compare);
+  {
+    FILE* fd = NULL;
+    char filename[256];
+    snprintf(filename, 256, "output%d.txt", rank);
+    fd = fopen(filename,"w+");
+    for(i = 0; i < subsum; i++)
+      fprintf(fd, "  %d\n", receiver[i]);
+
+    fclose(fd);
+    printf("Array received at the end is stored in output%d.txt\n", rank);
+  }
+  MPI_Waitall(N, request_out, status_out);
   /* do a local sort */
 
   /* every processor writes its result to a file */
 
-  free(vec);
+  free(vec);free(svec);free(rvec);free(spliter);free(counter);
+  free(Rcounter);free(receiver);free(request_out);free(request_in);
+  free(status_out);free(status_in);
+
   MPI_Finalize();
   return 0;
 }
