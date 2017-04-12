@@ -35,30 +35,31 @@ int main( int argc, char *argv[])
   
   vec = calloc(N, sizeof(int));
   /* seed random number generator differently on every core */
-  srand((unsigned int) (rank + 393919));
+  srand((unsigned int) (rank ));
 
   /* fill vector with random integers */
   for (i = 0; i < N; ++i) {
     vec[i] = rand();
   }
-  printf("rank: %d, first entry: %d\n", rank, vec[0]);
+
+  /* printf("rank: %d, first entry: %d\n", rank, vec[0]);  */
   qsort(vec, N, sizeof(int), compare);
     
   svec = calloc(gap, sizeof(int));
   for(i=1;i<=gap;i++){
-      svec[i-1]=vec[(N/gap)*i];
+      svec[i-1]=vec[(N/gap)*i-1];
   }
 
   if(rank==0){
     rvec = calloc(size*gap, sizeof(int));
   }
 
-  MPI_Gather(svec,gap,MPI_INT,rvec,size*gap,MPI_INT,0,MPI_COMM_WORLD);
+  MPI_Gather(svec,gap,MPI_INT,rvec,gap,MPI_INT,0,MPI_COMM_WORLD);
   spliter = calloc(size-1, sizeof(int));
 
   if(rank==0){
     qsort(rvec, gap*size, sizeof(int), compare);  
-    for(i=0,i<size-1,i++){
+    for(i=0;i<size-1;i++){
       spliter[i]=rvec[(i+1)*gap];
     }
   }
@@ -66,20 +67,28 @@ int main( int argc, char *argv[])
   MPI_Bcast(spliter,size-1,MPI_INT,0,MPI_COMM_WORLD);
   counter = calloc(size, sizeof(int));
   Rcounter = calloc(size, sizeof(int));
+  
   subsum = 0;
   index = 0;
-  for(i=0;i<N;i++){
-    if(vec[i]>spliter[index]){
-      counter[index]=subsum;
-      subsum=0;
-      index++;
-    }else{
-      subsum++;
-    }
+  i=0;
+  while(i<N && index<size-1){
+     if(vec[i] <= spliter[index]){
+        i++;
+        subsum++;
+     }else{
+        counter[index]=subsum;
+        if(rank==0)printf(" %d ",subsum);
+        subsum=0;
+        index++;
+     } 
   }
-  if(index<N){
+
+  if(index==size-1){
+    counter[index] = N-i;
+  }else{
     counter[index]=subsum;
   }
+
 
 
   MPI_Alltoall(counter,1,MPI_INT,Rcounter,1,MPI_INT,MPI_COMM_WORLD);
@@ -114,6 +123,7 @@ int main( int argc, char *argv[])
   
   
   MPI_Waitall(subsum, request_in, status_in);
+  MPI_Waitall(N, request_out, status_out);
   qsort(receiver, subsum, sizeof(int), compare);
   {
     FILE* fd = NULL;
@@ -126,7 +136,8 @@ int main( int argc, char *argv[])
     fclose(fd);
     printf("Array received at the end is stored in output%d.txt\n", rank);
   }
-  MPI_Waitall(N, request_out, status_out);
+
+  
   /* do a local sort */
 
   /* every processor writes its result to a file */
