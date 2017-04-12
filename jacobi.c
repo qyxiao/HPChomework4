@@ -10,7 +10,7 @@
 #include <string.h>
 
 /* compuate global residual, assuming ghost values are updated */
-double compute_residual(double *lu, int lN, double invhsq)
+double compute_residual(double *u, int N, double invhsq)
 {
   int i,j;
   double tmp, gres = 0.0, res = 0.0;
@@ -29,10 +29,8 @@ double compute_residual(double *lu, int lN, double invhsq)
 
 int main(int argc, char * argv[])
 {
-  int mpirank, i, p, N, lN, iter, max_iters;
-  MPI_Status status;
-  MPI_Request request_out1, request_in1;
-  MPI_Request request_out2, request_in2;
+  int mpirank, i, j, p, N, lN, iter, max_iters;
+ 
 
   MPI_Init(&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &mpirank);
@@ -46,22 +44,32 @@ int main(int argc, char * argv[])
 
   sscanf(argv[1], "%d", &N);
   sscanf(argv[2], "%d", &max_iters);
-
+  int sP = (int)sqrt(p);
   /* compute number of unknowns handled by each process */
-  lN = N / p;
+  lN = N / sP;
+
+
+  /*
   if ((N % p != 0) && mpirank == 0 ) {
     printf("N: %d, local N: %d\n", N, lN);
     printf("Exiting. N must be a multiple of p\n");
     MPI_Abort(MPI_COMM_WORLD, 0);
   }
+  */
+   
+
+  MPI_Status status[lN];
+  MPI_Request request_out1[lN], request_in1[lN],request_out2[lN], request_in2[lN];
+  MPI_Request request_out3[lN], request_in3[lN],request_out4[lN], request_in4[lN];
+
   /* timing */
   MPI_Barrier(MPI_COMM_WORLD);
   timestamp_type time1, time2;
   get_timestamp(&time1);
 
   /* Allocation of vectors, including left and right ghost points */
-  double * lu    = (double *) calloc(sizeof(double), lN + 2);
-  double * lunew = (double *) calloc(sizeof(double), lN + 2);
+  double * lu    = (double *) calloc(sizeof(double), (lN + 2)*(lN+2));
+  double * lunew = (double *) calloc(sizeof(double), (lN + 2)*(lN+2));
   double * lutemp;
 
   double h = 1.0 / (N + 1);
@@ -79,34 +87,69 @@ int main(int argc, char * argv[])
      * send/recv. During that communication, do all the local work */
 
     /* Jacobi step for the left and right most points */
-    lunew[1]  = 0.5 * (hsq + lu[0] + lu[2]);
-    lunew[lN] = 0.5 * (hsq + lu[lN-1] + lu[lN+1]);
+    for(j=1;j<=lN;j++){
+      lunew[1*(lN+2)+j] = 0.25 * (hsq + lu[j] + lu[2*(lN+2)+j] + lu[(lN+2)+j-1] + lu[(lN+2)+j+1]);
+      lunew[lN*(lN+2)+j] = 0.25 * (hsq + lu[(lN-1)*(lN+2)+j] + lu[(lN+1)*(lN+2)+j] + lu[lN*(lN+2)+j-1] + lu[lN*(lN+2)+j+1]);
+      lunew[j*(lN+2)+1] = 0.25 * (hsq + lu[(j-1)*(lN+2)+1] + lu[(j+1)*(lN+2)+1] + lu[j*(lN+2)] + lu[j*(lN+2)+2]);
+      lunew[j*(lN+2)+lN] = 0.25 * (hsq + lu[(j-1)*(lN+2)+lN] + lu[(j+1)*(lN+2)+lN] + lu[j*(lN+2)+lN-1] + lu[j*(lN+2)+lN+1]);
+    }
+    
 
-    if (mpirank < p - 1) {
-      /* If not the last process, send/recv bdry values to the right */
-      MPI_Irecv(&(lunew[lN+1]), 1, MPI_DOUBLE, mpirank+1, 123, MPI_COMM_WORLD, &request_in1);
-      MPI_Isend(&(lunew[lN]), 1, MPI_DOUBLE, mpirank+1, 124, MPI_COMM_WORLD, &request_out1);
+    if(mpirank-sP>=0){
+      for(i=1;i<=lN;i++){
+      MPI_Irecv(&(lunew[i]), 1, MPI_DOUBLE, mpirank-sP, i, MPI_COMM_WORLD, &request_in1[i-1]);
+      MPI_Isend(&(lunew[lN+2+i]), 1, MPI_DOUBLE, mpirank-sP, i, MPI_COMM_WORLD, &request_out1[i-1]);
     }
-    if (mpirank > 0) {
-      /* If not the first process, send/recv bdry values to the left */
-      MPI_Irecv(&(lunew[0]), 1, MPI_DOUBLE, mpirank-1, 124, MPI_COMM_WORLD, &request_in2);
-      MPI_Isend(&(lunew[1]), 1, MPI_DOUBLE, mpirank-1, 123, MPI_COMM_WORLD, &request_out2);
     }
+
+    if(mpirank+sP<p){
+      for(i=1;i<=lN;i++){
+      MPI_Irecv(&(lunew[(lN+1)*(lN+2)+i]), 1, MPI_DOUBLE, mpirank+sP, i, MPI_COMM_WORLD, &request_in2[i-1]);
+      MPI_Isend(&(lunew[(lN)*(lN+2)+i]), 1, MPI_DOUBLE, mpirank+sP, i, MPI_COMM_WORLD, &request_out2[i-1]);
+    }
+    }
+
+    if(mpirank % sP !=0){
+      for(i=1;i<=lN;i++){
+      MPI_Irecv(&(lunew[i*(lN+2)]), 1, MPI_DOUBLE, mpirank-1, i, MPI_COMM_WORLD, &request_in3[i-1]);
+      MPI_Isend(&(lunew[i*(lN+2)+1]), 1, MPI_DOUBLE, mpirank-1, i, MPI_COMM_WORLD, &request_out3[i-1]);
+    }
+    }
+
+
+    if((mpirank+1) % sP !=0){
+      for(i=1;i<=lN;i++){
+      MPI_Irecv(&(lunew[i*(lN+2)+lN+1]), 1, MPI_DOUBLE, mpirank+1, i, MPI_COMM_WORLD, &request_in4[i-1]);
+      MPI_Isend(&(lunew[i*(lN+2)+lN]), 1, MPI_DOUBLE, mpirank+1, i, MPI_COMM_WORLD, &request_out4[i-1]);
+    }
+    }
+
 
     /* Jacobi step for all the inner points */
     for (i = 2; i < lN; i++){
-      lunew[i]  = 0.5 * (hsq + lu[i - 1] + lu[i + 1]);
+      for(j = 2; j < lN; j++){
+        lunew[i*(lN+2)+j] = 0.25 * (hsq + lu[(i-1)*(lN+2)+j] + lu[(i+1)*(lN+2)+j] + lu[i*(lN+2)+j-1] + lu[i*(lN+2)+j+1]);
+      }
     }
 
-    /* check if Isend/Irecv are done */
-    if (mpirank < p - 1) {
-      MPI_Wait(&request_out1, &status);
-      MPI_Wait(&request_in1, &status);
+    /* check if Isend/Irecv are done */  
+    if(mpirank-sP>=0) {
+      MPI_Waitall(lN, request_out1, status);
+      MPI_Waitall(lN, request_in1, status);
     }
-    if (mpirank > 0) {
-      MPI_Wait(&request_out2, &status);
-      MPI_Wait(&request_in2, &status);
+    if(mpirank+sP<p) {
+      MPI_Waitall(lN, request_out2, status);
+      MPI_Waitall(lN, request_in2, status);
     }
+    if(mpirank % sP !=0) {
+      MPI_Waitall(lN, request_out3, status);
+      MPI_Waitall(lN, request_in3, status);
+    }
+    if((mpirank+1) % sP !=0) {
+      MPI_Waitall(lN, request_out4, status);
+      MPI_Waitall(lN, request_in4, status);
+    }
+    
 
     /* copy newu to u using pointer flipping */
     lutemp = lu; lu = lunew; lunew = lutemp;
