@@ -26,7 +26,7 @@ mpi7: mpi_solved7.c
 	${CC}  $^ -o mpi_solved7
 
 jacobi: jacobi-mpi2D.c
-	${CC}  $^ -o jacobi-mpi2D
+	${CC} -lm $^ -o jacobi-mpi2D
 
 ssort: ssort.c
 	${CC}  $^ -o ssort

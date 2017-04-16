@@ -17,7 +17,7 @@
 
 int main (int argc, char *argv[])
 {
-int numtasks, rank, buf, tag1=1, i, rc, dest, src, offset, nreqs;
+int numtasks, rank, buf, tag1=1, i, rc, dest, src, offset=0, nreqs;
 double T1, T2;
 MPI_Request reqs[REPS*2];
 MPI_Status stats[REPS*2];
@@ -54,12 +54,13 @@ if (rank < 2) {
     }
   if (rank == 1) {
     src = 0;
-    offset = REPS;
+    offset = 0;
     }
   dest = src;
 
 /* Do the non-blocking send and receive operations */
   for (i=0; i<REPS; i++) {
+    
     MPI_Isend(&rank, 1, MPI_INT, dest, tag1, COMM, &reqs[offset]);
     MPI_Irecv(&buf, 1, MPI_INT, src, tag1, COMM, &reqs[offset+1]);
     offset += 2;
@@ -73,10 +74,11 @@ if (rank < 2) {
    operation request handles to capture. offset is where the task should
    store each request as it is captured in the reqs() array.  */
 if (rank > 1) {
-  nreqs = REPS;
+  
 
 /* Task 2 does the blocking send operation */
   if (rank == 2) {
+    nreqs = 0;
     dest = 3;
     for (i=0; i<REPS; i++) {
       MPI_Send(&rank, 1, MPI_INT, dest, tag1, COMM);
@@ -87,6 +89,7 @@ if (rank > 1) {
 
 /* Task 3 does the non-blocking receive operation */
   if (rank == 3) {
+    nreqs = REPS;
     src = 2;
     offset = 0;
     for (i=0; i<REPS; i++) {
@@ -100,7 +103,10 @@ if (rank > 1) {
   }
 
 /* Wait for all non-blocking operations to complete and record time */
-MPI_Waitall(nreqs, reqs, stats);
+
+ MPI_Waitall(nreqs, reqs, stats);
+
+
 T2 = MPI_Wtime();     /* end time */
 MPI_Barrier(COMM);
 
